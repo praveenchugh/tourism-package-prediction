@@ -85,14 +85,17 @@ def get_hf_client() -> HfApi:
 # Data Loading
 # ============================================================
 def load_splits():
-    """Load prepared train/test splits from local CSV files."""
-    Xtrain = pd.read_csv("Xtrain.csv")
-    Xtest = pd.read_csv("Xtest.csv")
-    ytrain = pd.read_csv("ytrain.csv").squeeze()
-    ytest = pd.read_csv("ytest.csv").squeeze()
+    """Load prepared dataset splits directly from Hugging Face."""
+    base = f"hf://datasets/{DATASET_REPO}"
 
-    print("Dataset splits loaded successfully.")
+    Xtrain = pd.read_csv(f"{base}/Xtrain.csv")
+    Xtest = pd.read_csv(f"{base}/Xtest.csv")
+    ytrain = pd.read_csv(f"{base}/ytrain.csv").squeeze()
+    ytest = pd.read_csv(f"{base}/ytest.csv").squeeze()
+
+    print("Dataset splits loaded from Hugging Face.")
     return Xtrain, Xtest, ytrain, ytest
+
 
 
 # ============================================================
