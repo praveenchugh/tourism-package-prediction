@@ -1,20 +1,24 @@
-
 """
 Data Preparation Module
 -----------------------
 Loads dataset from Hugging Face, performs train/test split,
 and uploads prepared splits back to the dataset repository.
+
+Authentication:
+- Uses environment variable `HF_TOKEN`
 """
 
 # ============================================================
-# Hugging Face Authentication
+# Imports
 # ============================================================
+import os
+from typing import Optional, Tuple
 
-HF_TOKEN = keyring.get_password("huggingface", "gl_access_token_travel_project")
-if not HF_TOKEN:
-    raise RuntimeError("Hugging Face token not found in macOS Keychain.")
+import pandas as pd
+from sklearn.model_selection import train_test_split
 
-os.environ["HF_HUB_TOKEN"] = HF_TOKEN
+from huggingface_hub import HfApi
+
 
 # ============================================================
 # Configuration
@@ -28,39 +32,92 @@ TEST_SIZE = 0.2
 RANDOM_STATE = 42
 
 NUMERIC_FEATURES = [
-    "Age", "CityTier", "NumberOfPersonVisiting", "PreferredPropertyStar",
-    "NumberOfTrips", "NumberOfChildrenVisiting", "MonthlyIncome",
-    "PitchSatisfactionScore", "NumberOfFollowups", "DurationOfPitch",
+    "Age",
+    "CityTier",
+    "NumberOfPersonVisiting",
+    "PreferredPropertyStar",
+    "NumberOfTrips",
+    "NumberOfChildrenVisiting",
+    "MonthlyIncome",
+    "PitchSatisfactionScore",
+    "NumberOfFollowups",
+    "DurationOfPitch",
 ]
 
 CATEGORICAL_FEATURES = [
-    "TypeofContact", "Occupation", "Gender", "MaritalStatus",
-    "Designation", "ProductPitched", "Passport", "OwnCar",
+    "TypeofContact",
+    "Occupation",
+    "Gender",
+    "MaritalStatus",
+    "Designation",
+    "ProductPitched",
+    "Passport",
+    "OwnCar",
 ]
 
+SPLIT_FILES = ["Xtrain.csv", "Xtest.csv", "ytrain.csv", "ytest.csv"]
+
 
 # ============================================================
-# Functions
+# Authentication
 # ============================================================
+def get_hf_token() -> str:
+    """
+    Retrieve Hugging Face token from environment variable.
+
+    Raises
+    ------
+    RuntimeError
+        If HF_TOKEN is not set.
+    """
+    token: Optional[str] = os.getenv("HF_TOKEN")
+
+    if not token:
+        raise RuntimeError(
+            "HF_TOKEN environment variable not set. "
+            "Configure it locally or in GitHub Actions secrets."
+        )
+
+    return token
+
+
 def get_hf_client() -> HfApi:
-    """Return an authenticated Hugging Face client."""
-    return HfApi(token=os.environ["HF_HUB_TOKEN"])
+    """
+    Create an authenticated Hugging Face API client.
+    """
+    return HfApi(token=get_hf_token())
 
 
+# ============================================================
+# Data Loading
+# ============================================================
 def load_dataset() -> pd.DataFrame:
-    """Load dataset from Hugging Face storage."""
+    """
+    Load dataset directly from Hugging Face storage.
+    """
     df = pd.read_csv(DATASET_PATH)
-    print("Dataset loaded successfully.")
+    print("Dataset loaded successfully from Hugging Face.")
     return df
 
 
-def prepare_data(df: pd.DataFrame):
-    """Split dataset into training and testing sets and save locally."""
+# ============================================================
+# Data Preparation
+# ============================================================
+def prepare_data(
+    df: pd.DataFrame,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """
+    Split dataset into training and testing sets and save locally.
+    """
     X = df[NUMERIC_FEATURES + CATEGORICAL_FEATURES]
     y = df[TARGET_COL]
 
     Xtrain, Xtest, ytrain, ytest = train_test_split(
-        X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE
+        X,
+        y,
+        test_size=TEST_SIZE,
+        random_state=RANDOM_STATE,
+        stratify=y,  # ensures class balance in splits
     )
 
     Xtrain.to_csv("Xtrain.csv", index=False)
@@ -68,13 +125,22 @@ def prepare_data(df: pd.DataFrame):
     ytrain.to_csv("ytrain.csv", index=False)
     ytest.to_csv("ytest.csv", index=False)
 
-    print("Data split completed and saved locally.")
+    print("Train/test split completed and saved locally.")
+
     return Xtrain, Xtest, ytrain.squeeze(), ytest.squeeze()
 
 
-def upload_dataset_splits(api: HfApi):
-    """Upload prepared dataset splits to the Hugging Face dataset repository."""
-    for file in ["Xtrain.csv", "Xtest.csv", "ytrain.csv", "ytest.csv"]:
+# ============================================================
+# Upload Prepared Splits
+# ============================================================
+def upload_dataset_splits(api: HfApi) -> None:
+    """
+    Upload prepared dataset split files to Hugging Face dataset repository.
+    """
+    for file in SPLIT_FILES:
+        if not os.path.exists(file):
+            raise FileNotFoundError(f"Missing split file: {file}")
+
         api.upload_file(
             path_or_fileobj=file,
             path_in_repo=file,
@@ -82,17 +148,23 @@ def upload_dataset_splits(api: HfApi):
             repo_type="dataset",
         )
 
-    print("Dataset splits uploaded to Hugging Face.")
+    print("Dataset splits uploaded successfully to Hugging Face.")
 
 
 # ============================================================
-# Entry Point
+# Main Execution
 # ============================================================
-def main():
+def main() -> None:
+    """
+    End-to-end data preparation workflow.
+    """
     api = get_hf_client()
+
     df = load_dataset()
     prepare_data(df)
     upload_dataset_splits(api)
+
+    print("Data preparation pipeline completed.")
 
 
 if __name__ == "__main__":
