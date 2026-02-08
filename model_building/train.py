@@ -1,98 +1,186 @@
-
 """
-Data Preparation Module
------------------------
-Loads dataset from Hugging Face, performs train/test split,
-and uploads prepared splits back to the dataset repository.
+Model Training Module
+---------------------
+Trains an XGBoost classification model using prepared dataset splits,
+logs metrics to MLflow, and uploads the trained model to Hugging Face Hub.
+
+Authentication:
+- Uses environment variable `HF_TOKEN`
 """
 
 # ============================================================
-# Hugging Face Authentication
+# Imports
 # ============================================================
+import os
+from typing import Optional
 
-HF_TOKEN = keyring.get_password("huggingface", "gl_access_token_travel_project")
-if not HF_TOKEN:
-    raise RuntimeError("Hugging Face token not found in macOS Keychain.")
+import joblib
+import mlflow
+import pandas as pd
+import xgboost as xgb
 
-os.environ["HF_HUB_TOKEN"] = HF_TOKEN
+from sklearn.compose import make_column_transformer
+from sklearn.metrics import classification_report
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+from huggingface_hub import HfApi
+
 
 # ============================================================
 # Configuration
 # ============================================================
-DATASET_REPO = "praveenchugh/tourism-package-prediction-dataset"
-DATASET_FILENAME = "tourism.csv"
-DATASET_PATH = f"hf://datasets/{DATASET_REPO}/{DATASET_FILENAME}"
+MODEL_REPO_ID = "praveenchugh/tourism-package-prediction-model"
+MODEL_FILE = "best_mlops_tourism_model.joblib"
 
-TARGET_COL = "ProdTaken"
-TEST_SIZE = 0.2
-RANDOM_STATE = 42
+MLFLOW_TRACKING_URI = "http://localhost:5001"
+MLFLOW_EXPERIMENT = "mlops-training-experiment"
+
+CLASSIFICATION_THRESHOLD = 0.45
 
 NUMERIC_FEATURES = [
-    "Age", "CityTier", "NumberOfPersonVisiting", "PreferredPropertyStar",
-    "NumberOfTrips", "NumberOfChildrenVisiting", "MonthlyIncome",
-    "PitchSatisfactionScore", "NumberOfFollowups", "DurationOfPitch",
+    "Age",
+    "CityTier",
+    "NumberOfPersonVisiting",
+    "PreferredPropertyStar",
+    "NumberOfTrips",
+    "NumberOfChildrenVisiting",
+    "MonthlyIncome",
+    "PitchSatisfactionScore",
+    "NumberOfFollowups",
+    "DurationOfPitch",
 ]
 
 CATEGORICAL_FEATURES = [
-    "TypeofContact", "Occupation", "Gender", "MaritalStatus",
-    "Designation", "ProductPitched", "Passport", "OwnCar",
+    "TypeofContact",
+    "Occupation",
+    "Gender",
+    "MaritalStatus",
+    "Designation",
+    "ProductPitched",
+    "Passport",
+    "OwnCar",
 ]
 
 
 # ============================================================
-# Functions
+# Authentication
 # ============================================================
+def get_hf_token() -> str:
+    """Retrieve Hugging Face token from environment variable."""
+    token: Optional[str] = os.getenv("HF_TOKEN")
+
+    if not token:
+        raise RuntimeError("HF_TOKEN environment variable not set.")
+
+    return token
+
+
 def get_hf_client() -> HfApi:
-    """Return an authenticated Hugging Face client."""
-    return HfApi(token=os.environ["HF_HUB_TOKEN"])
+    """Create authenticated Hugging Face API client."""
+    return HfApi(token=get_hf_token())
 
 
-def load_dataset() -> pd.DataFrame:
-    """Load dataset from Hugging Face storage."""
-    df = pd.read_csv(DATASET_PATH)
-    print("Dataset loaded successfully.")
-    return df
+# ============================================================
+# Data Loading
+# ============================================================
+def load_splits():
+    """Load prepared train/test splits from local CSV files."""
+    Xtrain = pd.read_csv("Xtrain.csv")
+    Xtest = pd.read_csv("Xtest.csv")
+    ytrain = pd.read_csv("ytrain.csv").squeeze()
+    ytest = pd.read_csv("ytest.csv").squeeze()
+
+    print("Dataset splits loaded successfully.")
+    return Xtrain, Xtest, ytrain, ytest
 
 
-def prepare_data(df: pd.DataFrame):
-    """Split dataset into training and testing sets and save locally."""
-    X = df[NUMERIC_FEATURES + CATEGORICAL_FEATURES]
-    y = df[TARGET_COL]
-
-    Xtrain, Xtest, ytrain, ytest = train_test_split(
-        X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE
+# ============================================================
+# Model Pipeline
+# ============================================================
+def build_pipeline(scale_pos_weight: float):
+    """Create preprocessing + XGBoost pipeline."""
+    preprocessor = make_column_transformer(
+        (StandardScaler(), NUMERIC_FEATURES),
+        (OneHotEncoder(handle_unknown="ignore"), CATEGORICAL_FEATURES),
     )
 
-    Xtrain.to_csv("Xtrain.csv", index=False)
-    Xtest.to_csv("Xtest.csv", index=False)
-    ytrain.to_csv("ytrain.csv", index=False)
-    ytest.to_csv("ytest.csv", index=False)
+    model = xgb.XGBClassifier(
+        n_estimators=150,
+        max_depth=4,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        scale_pos_weight=scale_pos_weight,
+        eval_metric="logloss",
+        random_state=42,
+        n_jobs=-1,
+    )
 
-    print("Data split completed and saved locally.")
-    return Xtrain, Xtest, ytrain.squeeze(), ytest.squeeze()
-
-
-def upload_dataset_splits(api: HfApi):
-    """Upload prepared dataset splits to the Hugging Face dataset repository."""
-    for file in ["Xtrain.csv", "Xtest.csv", "ytrain.csv", "ytest.csv"]:
-        api.upload_file(
-            path_or_fileobj=file,
-            path_in_repo=file,
-            repo_id=DATASET_REPO,
-            repo_type="dataset",
-        )
-
-    print("Dataset splits uploaded to Hugging Face.")
+    return make_pipeline(preprocessor, model)
 
 
 # ============================================================
-# Entry Point
+# Training + MLflow Logging
+# ============================================================
+def train_and_log_model(Xtrain, Xtest, ytrain, ytest) -> str:
+    """Train model, log metrics to MLflow, and save artifact."""
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    mlflow.set_experiment(MLFLOW_EXPERIMENT)
+
+    scale_pos_weight = ytrain.value_counts()[0] / ytrain.value_counts()[1]
+    pipeline = build_pipeline(scale_pos_weight)
+
+    with mlflow.start_run():
+
+        pipeline.fit(Xtrain, ytrain)
+
+        y_train_pred = (pipeline.predict_proba(Xtrain)[:, 1] >= CLASSIFICATION_THRESHOLD).astype(int)
+        y_test_pred = (pipeline.predict_proba(Xtest)[:, 1] >= CLASSIFICATION_THRESHOLD).astype(int)
+
+        train_report = classification_report(ytrain, y_train_pred, output_dict=True)
+        test_report = classification_report(ytest, y_test_pred, output_dict=True)
+
+        mlflow.log_metrics({
+            "train_accuracy": train_report["accuracy"],
+            "train_f1": train_report["1"]["f1-score"],
+            "test_accuracy": test_report["accuracy"],
+            "test_f1": test_report["1"]["f1-score"],
+        })
+
+        joblib.dump(pipeline, MODEL_FILE)
+        mlflow.log_artifact(MODEL_FILE, artifact_path="model")
+
+    print("Model training and MLflow logging completed.")
+    return MODEL_FILE
+
+
+# ============================================================
+# Upload Model to Hugging Face
+# ============================================================
+def upload_model(api: HfApi, model_path: str):
+    """Upload trained model artifact to Hugging Face Hub."""
+    api.upload_file(
+        path_or_fileobj=model_path,
+        path_in_repo=model_path,
+        repo_id=MODEL_REPO_ID,
+        repo_type="model",
+    )
+
+    print("Model uploaded to Hugging Face successfully.")
+
+
+# ============================================================
+# Main Execution
 # ============================================================
 def main():
     api = get_hf_client()
-    df = load_dataset()
-    prepare_data(df)
-    upload_dataset_splits(api)
+
+    Xtrain, Xtest, ytrain, ytest = load_splits()
+    model_path = train_and_log_model(Xtrain, Xtest, ytrain, ytest)
+    upload_model(api, model_path)
+
+    print("Training pipeline completed successfully.")
 
 
 if __name__ == "__main__":
