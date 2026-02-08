@@ -30,13 +30,19 @@ from huggingface_hub import HfApi
 # ============================================================
 # Configuration
 # ============================================================
+# ============================================================
+# Configuration
+# ============================================================
+DATASET_REPO = "praveenchugh/tourism-package-prediction-dataset"
+
 MODEL_REPO_ID = "praveenchugh/tourism-package-prediction-model"
 MODEL_FILE = "best_mlops_tourism_model.joblib"
 
-MLFLOW_TRACKING_URI = "http://localhost:5001"
+MLFLOW_TRACKING_URI = "file:./mlruns"
 MLFLOW_EXPERIMENT = "mlops-training-experiment"
 
 CLASSIFICATION_THRESHOLD = 0.45
+
 
 NUMERIC_FEATURES = [
     "Age",
