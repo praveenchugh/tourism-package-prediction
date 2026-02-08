@@ -10,6 +10,12 @@ This module:
 3. Ensures a repository exists on the Hugging Face Hub.
 4. Uploads a local dataset folder to the repository.
 """
+import os
+import keyring
+import pandas as pd
+
+from huggingface_hub import HfApi, create_repo
+from huggingface_hub.utils import RepositoryNotFoundError
 
 # ============================================================
 # Constants
