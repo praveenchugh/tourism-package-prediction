@@ -22,7 +22,7 @@ from huggingface_hub.utils import RepositoryNotFoundError
 # ============================================================
 REPO_ID = "praveenchugh/tourism-package-prediction-dataset"
 REPO_TYPE = "dataset"
-DATA_PATH = "tourism_project/data"
+DATA_PATH = "data"
 
 
 # ============================================================
