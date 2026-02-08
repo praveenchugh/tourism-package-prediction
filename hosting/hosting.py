@@ -21,7 +21,7 @@ from huggingface_hub.utils import RepositoryNotFoundError
 # ============================================================
 HF_TOKEN_ENV = "HF_TOKEN"
 
-LOCAL_DEPLOYMENT_FOLDER = "tourism_project/deployment"
+LOCAL_DEPLOYMENT_FOLDER = "deployment"
 SPACE_REPO_ID = "praveenchugh/tourism-package-prediction"
 SPACE_SUBFOLDER_PATH = ""  # Optional subfolder inside Space repo
 
